@@ -1,0 +1,50 @@
+name: release
+
+# Patch-bump and publish when the library itself changes. A manual run
+# publishes the current VERSION as-is, without bumping.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'deps.edn'
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with:
+          cli: latest
+
+      - name: Bump patch version
+        if: github.event_name == 'push'
+        run: clojure -T:build bump :level :patch
+
+      - name: Commit and tag
+        if: github.event_name == 'push'
+        run: |
+          VER=$(cat VERSION)
+          git config user.name  "hive-ci"
+          git config user.email "ci@hive-agi.local"
+          git add VERSION
+          git commit -m "chore(release): $VER [skip ci]"
+          git tag -a "v$VER" -m "release $VER"
+          git push --follow-tags
+
+      - name: Deploy
+        env:
+          CLOJARS_USERNAME: ${{ secrets.CLOJARS_USERNAME }}
+          CLOJARS_PASSWORD: ${{ secrets.CLOJARS_DEPLOY_TOKEN }}
+        run: clojure -T:build deploy
