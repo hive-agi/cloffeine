@@ -102,3 +102,7 @@ fabric.properties
 .project
 .settings
 .lsp
+
+# local scratch / probes
+dev/
+.cpcache/

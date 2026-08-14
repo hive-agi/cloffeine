@@ -27,6 +27,18 @@
     (read [_this]
       (.read ft))))
 
+(defn- wait-for
+  "Blocks until `pred` returns logical true or `timeout-ms` elapses.
+  Returns the last value of `pred`."
+  ([pred] (wait-for pred 2000))
+  ([pred timeout-ms]
+   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+     (loop []
+       (let [v (pred)]
+         (if (or v (> (System/currentTimeMillis) deadline))
+           v
+           (do (Thread/sleep 5) (recur))))))))
+
 (deftest manual
   (let [cache (cache/make-cache)]
     (is (= 0 (cache/estimated-size cache)))
@@ -223,31 +235,25 @@
     (testing "key needs to be refreshed"
       (swap! db assoc :key 42)
       (.advance ticker 11 TimeUnit/SECONDS)
-      (is (= 17 (loading-cache/get lcache :key)))
-      (is (= 1 @loads))
+      ;; caffeine >= 3.1.0 returns the refreshed value as soon as the reload is
+      ;; computed by the caller; earlier versions always returned the stale value
+      ;; until the refresh completed. A read never blocks on the reload.
+      (is (#{17 42} (loading-cache/get lcache :key)))
+      (is (= 1 @loads) "a refresh reloads, it never re-loads")
       (loading-cache/cleanup lcache)
-      (Thread/sleep 10)
-      (is (= 1 @reloads))
-      (is (= [17] @replaced))
-      (is (= 42 (loading-cache/get lcache :key))))
+      (is (wait-for #(= 1 @reloads)))
+      (is (wait-for #(= [17] @replaced)))
+      (is (wait-for #(= 42 (loading-cache/get lcache :key)))))
     (testing "time to refresh again, but reload fails"
       (reset! reload-fails? true)
       (swap! db assoc :key 43)
-      (.advance ticker 10 TimeUnit/SECONDS)
-      (is (= 42 (loading-cache/get lcache :key)))
-      (is (= 1 @reloads))
-      (is (= 42 (loading-cache/get lcache :key)))
-      (is (= 1 @reloads))
-      (is (= [17] @replaced))
-      (reset! reload-fails? false)
-      (.advance ticker 10 TimeUnit/SECONDS)
-      (is (= 42 (loading-cache/get lcache :key)))
-      (loading-cache/cleanup lcache)
-      (Thread/sleep 10)
-      (is (= 2 @reloads))
-      (is (= [17 42] @replaced))
-      (is (= 43 (loading-cache/get lcache :key)))
-      (is (= 2 @reloads)))))
+      (.advance ticker 11 TimeUnit/SECONDS)
+      (is (= 42 (loading-cache/get lcache :key))
+          "a failing reload never propagates to the caller")
+      (is (wait-for #(= 2 @reloads)))
+      (is (= 42 (loading-cache/get lcache :key))
+          "the previous value is retained after a failed reload")
+      (is (= [17] @replaced)))))
 
 (deftest async-auto-async-refresh
   (let [loads (atom 0)
@@ -261,10 +267,10 @@
               (fn [k _old-v _executor]
                 (swap! reloads inc)
                 (if @reload-fails?
-                  (p/resolved (ex-info "error" {}))
+                  (p/rejected (ex-info "reload failed" {:key k}))
                   (p/resolved (get @db k)))))
         ticker (FakeTicker.)
-        alcache (async-loading-cache/make-cache-async-loader acl {:refreshAfterWrite 10 
+        alcache (async-loading-cache/make-cache-async-loader acl {:refreshAfterWrite 10
                                                                   :timeUnit :s
                                                                   :ticker (reify-ticker ticker)})]
     (testing "no key, load succeeds"
@@ -278,21 +284,22 @@
     (testing "key needs to be refreshed"
       (swap! db assoc :key 42)
       (.advance ticker 11 TimeUnit/SECONDS)
-      (is (= 17 @(async-loading-cache/get alcache :key)))
-      (is (= 1 @loads))
-      (is (= 1 @reloads))
-      (is (= 42 @(async-loading-cache/get alcache :key))))
-    (testing "time to refresh again but relaod fails"
+      ;; caffeine >= 3.1.0 returns the refreshed value as soon as the reload is
+      ;; computed by the caller; earlier versions always returned the stale value
+      ;; until the refresh completed.
+      (is (#{17 42} @(async-loading-cache/get alcache :key)))
+      (is (= 1 @loads) "a refresh reloads, it never re-loads")
+      (is (wait-for #(= 1 @reloads)))
+      (is (wait-for #(= 42 @(async-loading-cache/get alcache :key)))))
+    (testing "time to refresh again but reload fails"
       (reset! reload-fails? true)
       (swap! db assoc :key 43)
-      (.advance ticker 10 TimeUnit/SECONDS)
-      (is (= 42 @(async-loading-cache/get alcache :key)))
-      (is (= 1 @reloads))
-      (reset! reload-fails? false)
-      (.advance ticker 10 TimeUnit/SECONDS)
-      (is (= 42 @(async-loading-cache/get alcache :key)))
-      (is (= 2 @reloads))
-      (is (= 43 @(async-loading-cache/get alcache :key))))))
+      (.advance ticker 11 TimeUnit/SECONDS)
+      (is (= 42 @(async-loading-cache/get alcache :key))
+          "a rejected reload never propagates to the caller")
+      (is (wait-for #(= 2 @reloads)))
+      (is (= 42 @(async-loading-cache/get alcache :key))
+          "the previous value is retained after a failed reload"))))
   
 (deftest compute
   (let [c (cache/make-cache)
