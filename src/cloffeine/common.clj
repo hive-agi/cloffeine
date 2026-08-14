@@ -7,7 +7,8 @@
                                                Weigher]
            [com.github.benmanes.caffeine.cache.stats CacheStats]
            [java.util.function BiFunction Function]
-           [java.util.concurrent TimeUnit]))
+           [java.util.concurrent TimeUnit]
+[java.time Duration]))
 
 (defn- time-unit
   [tu]
@@ -19,6 +20,24 @@
     :h TimeUnit/HOURS
     :d TimeUnit/DAYS))
 
+(defn- expire-after-access
+  ^Caffeine [^Caffeine bldr v ^TimeUnit timeUnit]
+  (if (instance? Duration v)
+    (.expireAfterAccess bldr ^Duration v)
+    (.expireAfterAccess bldr (long v) timeUnit)))
+
+(defn- expire-after-write
+  ^Caffeine [^Caffeine bldr v ^TimeUnit timeUnit]
+  (if (instance? Duration v)
+    (.expireAfterWrite bldr ^Duration v)
+    (.expireAfterWrite bldr (long v) timeUnit)))
+
+(defn- refresh-after-write
+  ^Caffeine [^Caffeine bldr v ^TimeUnit timeUnit]
+  (if (instance? Duration v)
+    (.refreshAfterWrite bldr ^Duration v)
+    (.refreshAfterWrite bldr (long v) timeUnit)))
+
 (defn make-builder
   "A builder for the various types of Caffeine's caches (AsyncCache,
   AsyncLoadingCache, Cache, LoadingCache). The corresponding `create` functions,
@@ -29,17 +48,30 @@
   * `:statsCounterSupplier` a `com.github.benmanes.caffeine.cache.stats.StatsCounter`,
       mutually exclusive with `:recordStats`
   * `:maximumSize` `long` Specifies the maximum number of entries the cache may contain.
+      Mutually exclusive with `:maximumWeight`.
+  * `:maximumWeight` `long` Specifies the maximum weight of entries the cache may
+      contain, as measured by `:weigher`. Requires `:weigher`, and is mutually
+      exclusive with `:maximumSize`.
   * `:expireAfter` `com.github.benmanes.caffeine.cache.Expiry`
-  * `:expireAfterAccess` `long`, references :timeUnit. Specifies that each entry
-      should be automatically removed from the cache once a fixed duration has
-      elapsed after the entry's creation, the most recent replacement of its value,
-      or its last read.
-  * `:expireAfterWrite` `long`, references :timeUnit. Specifies that active entries
-      are eligible for automatic refresh once a fixed duration has elapsed after
-      the entry's creation, or the most recent replacement of its value.
+  * `:expireAfterAccess` `long` (references `:timeUnit`) or a `java.time.Duration`.
+      Specifies that each entry should be automatically removed from the cache once
+      a fixed duration has elapsed after the entry's creation, the most recent
+      replacement of its value, or its last read.
+  * `:expireAfterWrite` `long` (references `:timeUnit`) or a `java.time.Duration`.
+      Specifies that each entry should be automatically removed from the cache once
+      a fixed duration has elapsed after the entry's creation, or the most recent
+      replacement of its value.
+  * `:refreshAfterWrite` `long` (references `:timeUnit`) or a `java.time.Duration`.
+      Specifies that active entries are eligible for automatic refresh once a fixed
+      duration has elapsed after the entry's creation, or the most recent
+      replacement of its value. Requires a `CacheLoader`.
   * `:executor` `java.util.concurrent.Executor` Specifies the executor to use when
       running asynchronous tasks.
+  * `:scheduler` `com.github.benmanes.caffeine.cache.Scheduler` Specifies the
+      scheduler that submits a maintenance task promptly after an entry expires.
   * `:weakKeys` `boolean`. Specifies that each key (not value) stored in the cache
+      should be wrapped in a WeakReference (by default, strong references are used).
+  * `:weakValues` `boolean`. Specifies that each value (not key) stored in the cache
       should be wrapped in a WeakReference (by default, strong references are used).
   * `:initialCapacity` 'long'. Sets the minimum total size for the internal data structures.
   * `:softValues` `Boolean` Specifies that each value (not key) stored in the cache
@@ -50,13 +82,18 @@
       nanosecond-precision time source for use in determining when entries should
       be expired or refreshed. By default, System.nanoTime() is used.
   * `:weigher` `com.github.benmanes.caffeine.cache.Weigher` Specifies the weigher
-      to use in determining the weight of entries.
-  * `:evictionListener` `com.github.benmanes.caffeine.cache.RemovalListener` 
+      to use in determining the weight of entries. Requires `:maximumWeight`.
+  * `:removalListener` `com.github.benmanes.caffeine.cache.RemovalListener`
       Specifies a listener instance that caches should notify each time an entry
-      is removed for any reason. Each cache created by this builder will invoke
-      this listener as part of the routine maintenance described in the class
+      is removed for any reason.
+  * `:evictionListener` `com.github.benmanes.caffeine.cache.RemovalListener`
+      Specifies a listener instance that caches should notify each time an entry
+      is evicted, as part of the routine maintenance described in the class
       documentation above.
-  * `:timeUnit` ``[:ms :us :s :m :h :d]`` default is `:s`"
+  * `:timeUnit` ``[:ms :us :s :m :h :d]`` default is `:s`
+
+  Throws `ExceptionInfo` when `:recordStats`/`:statsCounterSupplier` are combined,
+  or when `:weigher` is given without `:maximumWeight`."
   ^Caffeine [settings]
   (let [bldr     (Caffeine/newBuilder)
         settings (merge {:timeUnit :s} settings)
@@ -64,15 +101,20 @@
     (when (and (:recordStats settings)
                (:statsCounterSupplier settings))
       (throw (ex-info "Configuration error. :recordStats and :statsCounterSupplier are mutually exclusive" settings)))
+    (when (and (:weigher settings)
+               (not (:maximumWeight settings)))
+      (throw (ex-info "Configuration error. :weigher requires :maximumWeight" settings)))
     (cond-> bldr
             (:recordStats settings) (.recordStats)
             (:statsCounterSupplier settings) (.recordStats (:statsCounterSupplier settings))
-            (:maximumSize settings) (.maximumSize (int (:maximumSize settings)))
+            (:maximumSize settings) (.maximumSize (long (:maximumSize settings)))
+            (:maximumWeight settings) (.maximumWeight (long (:maximumWeight settings)))
             (:expireAfter settings) (.expireAfter (:expireAfter settings))
-            (:expireAfterAccess settings) (.expireAfterAccess (:expireAfterAccess settings) timeUnit)
-            (:expireAfterWrite settings) (.expireAfterWrite (:expireAfterWrite settings) timeUnit)
-            (:refreshAfterWrite settings) (.refreshAfterWrite (:refreshAfterWrite settings) timeUnit)
+            (:expireAfterAccess settings) (expire-after-access (:expireAfterAccess settings) timeUnit)
+            (:expireAfterWrite settings) (expire-after-write (:expireAfterWrite settings) timeUnit)
+            (:refreshAfterWrite settings) (refresh-after-write (:refreshAfterWrite settings) timeUnit)
             (:executor settings) (.executor (:executor settings))
+            (:scheduler settings) (.scheduler (:scheduler settings))
             (:weakKeys settings) (.weakKeys)
             (:weakValues settings) (.weakValues)
             (:initialCapacity settings) (.initialCapacity (int (:initialCapacity settings)))
@@ -139,7 +181,7 @@
   There is no unit for entry weights; rather they are simply relative to each other."
   [weigh-fn]
   (reify Weigher
-    (weigh ^Int [this k v]
+    (weigh [this k v]
       (weigh-fn this k v))))
 
 (defn ifn->function ^Function [ifn]

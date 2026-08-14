@@ -9,7 +9,8 @@ Simple clojure wrapper over [`Caffeine`](https://github.com/ben-manes/caffeine).
 [![cljdoc badge](https://cljdoc.org/badge/com.appsflyer/cloffeine)](https://cljdoc.org/d/com.appsflyer/cloffeine/CURRENT)
 
 ## Installing
-Add `[com.appsflyer/cloffeine "1.0.0"]` to your `project.clj` under `:dependencies`.
+Add `[com.appsflyer/cloffeine "1.1.0"]` to your `project.clj` under `:dependencies`,
+or `com.appsflyer/cloffeine {:mvn/version "1.1.0"}` to your `deps.edn`.
 
 ## [Checkout the docs](https://appsflyer.github.io/cloffeine/index.html)
 
@@ -17,6 +18,18 @@ Add `[com.appsflyer/cloffeine "1.0.0"]` to your `project.clj` under `:dependenci
 * This project is used in production already and is deemed stable.
 * Since 1.0.0 the project will change the major semver iff Caffeine does so (currently at 3.x).
 
+
+## Testing
+
+```bash
+lein test          # or: clojure -X:test
+```
+
+The suite has three parts: example-based tests (`cloffeine.core-test`),
+property-based tests over generated keys, values and operation sequences
+(`cloffeine.property-test`), and a mutation-testing suite
+(`cloffeine.mutation-test`) that injects defects into `cloffeine.common` at load
+time and asserts each one is detected by the tests.
 
 ## Usage
 
@@ -57,6 +70,30 @@ Add `[com.appsflyer/cloffeine "1.0.0"]` to your `project.clj` under `:dependenci
 (cache/invalidate! lcache :key)
 (is (= "key" (cache/get lcache :key name)))
 (is (= 1 @loads))
+```
+
+#### Refreshing
+
+Since caffeine 3.1.0, a read that finds a `:refreshAfterWrite` deadline elapsed may
+return the refreshed value rather than the stale one — the reload is computed by the
+caller when possible. The read never blocks on the reload, and a reload that throws
+(or a rejected promise, for the async loaders) leaves the previous value in place.
+
+```clojure
+(def lcache (loading-cache/make-cache cl {:refreshAfterWrite 10 :timeUnit :s}))
+;; equivalently, with a java.time.Duration
+(def lcache (loading-cache/make-cache cl {:refreshAfterWrite (java.time.Duration/ofSeconds 10)}))
+```
+
+### Bounding a cache
+
+```clojure
+;; by entry count
+(cache/make-cache {:maximumSize 10000})
+
+;; by weight — :weigher requires :maximumWeight
+(def weigher (common/reify-weigher (fn [_this _k v] (count v))))
+(cache/make-cache {:maximumWeight 1000 :weigher weigher})
 ```
 
 ### Async cache
