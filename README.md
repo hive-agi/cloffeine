@@ -2,6 +2,19 @@
 
 Simple clojure wrapper over [`Caffeine`](https://github.com/ben-manes/caffeine).
 
+> **hive-agi fork.** Published as `io.github.hive-agi/cloffeine` so hive projects can
+> use caffeine 3.2.4 while [AppsFlyer/cloffeine#16](https://github.com/AppsFlyer/cloffeine/pull/16)
+> is pending upstream. Namespaces are unchanged (`cloffeine.*`), so it is a drop-in
+> replacement for `com.appsflyer/cloffeine`. Once the PR lands, switch back to upstream.
+>
+> ```clojure
+> ;; deps.edn
+> :mvn/repos {"hive-gitea" {:url "https://gitea.hive-mcp.com/api/packages/hive-agi/maven"}}
+> :deps {io.github.hive-agi/cloffeine {:mvn/version "1.1.0"}}
+> ```
+>
+> Releases are cut locally: `clojure -T:build bump :level :patch` then `clojure -T:build deploy`.
+
 [![Clojars Project](https://img.shields.io/clojars/v/com.appsflyer/cloffeine.svg)](https://clojars.org/com.appsflyer/cloffeine)
 
 [![Coverage Status](https://coveralls.io/repos/github/AppsFlyer/cloffeine/badge.svg?branch=master)](https://coveralls.io/github/AppsFlyer/cloffeine?branch=master)

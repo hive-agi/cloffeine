@@ -1,0 +1,6 @@
+{:lib      io.github.hive-agi/cloffeine
+ :license  {:name "Eclipse Public License 1.0"
+            :url  "http://www.eclipse.org/legal/epl-v10.html"}
+ :scm-url  "https://github.com/hive-agi/cloffeine"
+ :src-dirs ["src"]
+ :publish  :gitea-source}
